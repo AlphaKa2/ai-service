@@ -10,7 +10,7 @@ Base = declarative_base()
 # Table: recommendation_plans (already defined in previous code)
 class RecommendationPlan(Base):
     __tablename__ = 'recommendation_plans'
-
+    
     recommendation_trip_id = Column(BigInteger, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, nullable=False)
     name = Column(String(50), nullable=False)
@@ -18,6 +18,10 @@ class RecommendationPlan(Base):
     recommendation_type = Column(Enum('AI-GENERATED', 'YOUTUBER_FOLLOW'), nullable=False)
     created_at = Column(DateTime, default=datetime.now, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
+
+    # Add the relationship to RecommendationSchedule
+    schedules = relationship("RecommendationSchedule", back_populates="recommendation_plan", cascade="all, delete-orphan")
+
 
 # Table: recommended_days
 class RecommendedDay(Base):
@@ -36,17 +40,20 @@ class RecommendedDay(Base):
 # Table: recommendation_schedules
 class RecommendationSchedule(Base):
     __tablename__ = 'recommendation_schedules'
-
+    
     schedule_id = Column(BigInteger, primary_key=True, autoincrement=True)
     day_id = Column(BigInteger, ForeignKey('recommended_days.day_id', ondelete="CASCADE"), nullable=False)
     place_id = Column(BigInteger, ForeignKey('recommendation_places.place_id'), nullable=False)
     schedule_order = Column(Integer, nullable=False)
-
-    __table_args__ = (UniqueConstraint('day_id', 'schedule_order', name='_day_order_uc'),)
+    recommendation_trip_id = Column(BigInteger, ForeignKey('recommendation_plans.recommendation_trip_id', ondelete="CASCADE"), nullable=False)
 
     # Relationships
     recommended_day = relationship("RecommendedDay", back_populates="schedules")
     place = relationship("RecommendationPlace", back_populates="schedules")
+    
+    # Link back to RecommendationPlan
+    recommendation_plan = relationship("RecommendationPlan", back_populates="schedules")
+
 
 # Table: recommendation_places
 class RecommendationPlace(Base):
@@ -54,6 +61,7 @@ class RecommendationPlace(Base):
 
     place_id = Column(BigInteger, primary_key=True, autoincrement=True)
     place_name = Column(String(100), nullable=False)
+    content = Column(String(500), nullable=True)
     address = Column(String(255), nullable=True)
     latitude = Column(DECIMAL(10, 7), nullable=False)
     longitude = Column(DECIMAL(10, 7), nullable=False)
@@ -95,11 +103,53 @@ class PreferencePurpose(Base):
     preference_id = Column(BigInteger, ForeignKey('preferences.preference_id', ondelete="CASCADE"), primary_key=True, nullable=False)
     purposes_id = Column(BigInteger, ForeignKey('purposes.purposes_id', ondelete="CASCADE"), primary_key=True, nullable=False)
 
+# Table: youtubers
+class Youtuber(Base):
+    __tablename__ = 'youtubers'
+
+    youtuber_id = Column(String(500), primary_key=True)
+    name = Column(String(500), nullable=False)
+    url = Column(String(500), nullable=False)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
+
+# Table: youtube_videos
+class YoutubeVideo(Base):
+    __tablename__ = 'youtube_videos'
+
+    video_id = Column(String(500), primary_key=True)
+    youtuber_id = Column(String(500), ForeignKey('youtubers.youtuber_id', ondelete="CASCADE"), nullable=False)
+    title = Column(String(100), nullable=False)
+    url = Column(String(500), nullable=False)
+    series_id = Column(BigInteger, nullable=True)
+    series_order = Column(Integer, nullable=True)
+    thumbnail_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=True)
+
+    # Relationships
+    youtuber = relationship("Youtuber", back_populates="videos")
+
+# Table: travel_plan_youtube_videos
+class TravelPlanYoutubeVideo(Base):
+    __tablename__ = 'travel_plan_youtube_videos'
+
+    travel_id = Column(BigInteger, ForeignKey('recommendation_plans.recommendation_trip_id', ondelete="CASCADE"), primary_key=True, nullable=False)
+    video_id = Column(String(500), ForeignKey('youtube_videos.video_id', ondelete="CASCADE"), primary_key=True, nullable=False)
+
+    # Relationships
+    travel_plan = relationship("RecommendationPlan", back_populates="youtube_videos")
+    youtube_video = relationship("YoutubeVideo", back_populates="travel_plans")
+
 # Relationships
 RecommendationPlan.days = relationship("RecommendedDay", order_by=RecommendedDay.day_number, back_populates="recommendation_plan")
 RecommendedDay.schedules = relationship("RecommendationSchedule", back_populates="recommended_day")
+Youtuber.videos = relationship("YoutubeVideo", back_populates="youtuber")
+YoutubeVideo.travel_plans = relationship("TravelPlanYoutubeVideo", back_populates="youtube_video")
+RecommendationPlan.youtube_videos = relationship("TravelPlanYoutubeVideo", back_populates="travel_plan")
 
 # Create an engine for the MySQL database
+# DATABASE_URL = "mysql+pymysql://root:your_mysql_password@localhost/recommendation_db"
 DATABASE_URL = ""
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

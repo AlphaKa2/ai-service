@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header, Depends
+from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from pydantic import BaseModel
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -31,6 +31,22 @@ async def lifespan(app: FastAPI):
     yield  # Application runs while yielding
     
 app = FastAPI(lifespan=lifespan)
+
+# Mock UserProfile class and service
+class UserProfile:
+    def __init__(self, user_id: str, username: str):
+        self.user_id = user_id
+        self.username = username
+
+# Example service to get UserProfile from headers
+def get_user_profile_from_header(request: Request) -> UserProfile:
+    user_id = request.headers.get("X-User-Id")
+    username = request.headers.get("X-Username")
+    
+    if not user_id or not username:
+        raise HTTPException(status_code=400, detail="User information missing in headers")
+    
+    return UserProfile(user_id=user_id, username=username)
 
 # Pydantic model for input validation
 class RequestData(BaseModel):
@@ -155,14 +171,14 @@ class RecommendationResponseDTO(BaseModel):
     description: str
     days: List[DayScheduleDTO]
 
-# Add CORS middleware here
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (can restrict to specific origins later)
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
-)
+# # Add CORS middleware here
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["*"],  # Allow all origins (can restrict to specific origins later)
+#     allow_credentials=True,
+#     allow_methods=["*"],  # Allow all HTTP methods
+#     allow_headers=["*"],  # Allow all headers
+# )
 
 # Dependency to get DB session
 def get_db():
@@ -384,7 +400,10 @@ def save_itinerary(response):
     return travel_data
 
 @app.get("/recommendations/all", response_model=List[RecommendationPlanDTO])
-async def get_all_recommendation(user_id: int = Header(...), db: Session = Depends(get_db)):
+async def get_all_recommendation(user_id: str = Header(..., alias="X-User-Id"),
+    user_role: str = Header(..., alias="X-User-Role"),
+    user_profile: str = Header(..., alias="X-User-Profile"),
+    user_nickname: str = Header(..., alias="X-User-Nickname"), db: Session = Depends(get_db)):
     recommendation_plans = db.query(RecommendationPlan).filter_by(user_id=user_id).all()
     
     # Prepare and return the list of recommendations
@@ -497,7 +516,12 @@ async def delete_recommendation(recommendation_trip_id: int, db: Session = Depen
 
     
 @app.post("/recommendations")
-async def recommend(request_data: RequestData, user_id: int = Header(...), db: Session = Depends(get_db)):
+async def recommend(request_data: RequestData,
+    user_id: str = Header(..., alias="X-User-Id"),
+    user_role: str = Header(..., alias="X-User-Role"),
+    user_profile: str = Header(..., alias="X-User-Profile"),
+    user_nickname: str = Header(..., alias="X-User-Nickname"),
+    db: Session = Depends(get_db)):
     try:
         # Now user_id is available here
         print(f"User ID from header: {user_id}")
@@ -522,7 +546,7 @@ async def recommend(request_data: RequestData, user_id: int = Header(...), db: S
         travel_data = save_itinerary(response)
         # Save the recommendations to the database using user_id
         created_recommendation_id = save_itinerary_to_db(travel_data, user_id, db, request_data)
-
+        print("before return")
         return {"message": "Itinerary has been generated and saved.",
                 "recommendation_trip_id": created_recommendation_id}
 
@@ -536,145 +560,133 @@ async def recommend(request_data: RequestData, user_id: int = Header(...), db: S
         print(e)
     
 def save_itinerary_to_db(loaded_data, user_id, db: Session, request_data: RequestData):
+    try:
+        print("start_db")
+        # Unpack title and description from the loaded_data
+        title = loaded_data[0]['title']
+        description = loaded_data[0]['description']
+        
+        # Create a new RecommendationPlan entry
+        recommendation_plan = RecommendationPlan(
+            user_id=user_id,  # Use the user_id passed to the function
+            name=title,  # Set the title from JSON
+            description=description,  # Set the description from JSON
+            recommendation_type=request_data.recommendation_type  # Use the appropriate type from request_data
+        )
+        db.add(recommendation_plan)
+        db.commit()
+        db.refresh(recommendation_plan)  # Get the new auto-incremented recommendation_trip_id
+        
+        
+        # Step 1: Create and save the Preference entry
+        preference = Preference(
+            recommendation_id=recommendation_plan.recommendation_trip_id,
+            style=request_data.TRAVEL_STYL_1,
+            motive=request_data.TRAVEL_MOTIVE_1,
+            means_of_transportation=request_data.MVMN_NM,
+            travel_companion_status=request_data.TRAVEL_STATUS_ACCOMPANY,
+            age_group=request_data.AGE_GRP,
+            start_date=datetime.strptime(request_data.start_date, '%Y-%m-%d'),
+            end_date=datetime.strptime(request_data.end_date, '%Y-%m-%d')
+        )
+        db.add(preference)
+        db.commit()
+        db.refresh(preference)
 
-    # with open('./cleaned_recommendation_cl.json', 'r', encoding='utf-8') as json_file:
-    #     loaded_data = json.load(json_file)
-    # Unpack title and description from the loaded_data
-    title = loaded_data[0]['title']
-    description = loaded_data[0]['description']
-    
-    print(f"loaded data: {loaded_data}")
-    # Create a new RecommendationPlan entry
-    recommendation_plan = RecommendationPlan(
-        user_id=user_id,  # Use the user_id passed to the function
-        name=title,  # Set the title from JSON
-        description=description,  # Set the description from JSON
-        recommendation_type=request_data.recommendation_type  # Use the appropriate type from request_data
-    )
-    db.add(recommendation_plan)
-    db.commit()
-    db.refresh(recommendation_plan)  # Get the new auto-incremented recommendation_trip_id
+        # Step 2: Create and save the Purpose and PreferencePurpose entries
+        purpose = request_data.TRAVEL_PURPOSE  # Assuming TRAVEL_PURPOSE is a list of purposes
+        # Check if the purpose already exists, or add it if not
+        purpose = Purpose(name=purpose)
+        db.add(purpose)
+        db.commit()  # Commit immediately after adding a new purpose
+        db.refresh(purpose)
 
-    # Step 1: Create and save the Preference entry
-    preference = Preference(
-        recommendation_id=recommendation_plan.recommendation_trip_id,
-        style=request_data.TRAVEL_STYL_1,
-        motive=request_data.TRAVEL_MOTIVE_1,
-        means_of_transportation=request_data.MVMN_NM,
-        travel_companion_status=request_data.TRAVEL_STATUS_ACCOMPANY,
-        age_group=request_data.AGE_GRP,
-        start_date=datetime.strptime(request_data.start_date, '%Y-%m-%d'),
-        end_date=datetime.strptime(request_data.end_date, '%Y-%m-%d')
-    )
-    db.add(preference)
-    db.commit()
-    db.refresh(preference)
-
-    # Step 2: Create and save the Purpose and PreferencePurpose entries
-    purpose = request_data.TRAVEL_PURPOSE  # Assuming TRAVEL_PURPOSE is a list of purposes
-    # Check if the purpose already exists, or add it if not
-    purpose = Purpose(name=purpose)
-    db.add(purpose)
-    db.commit()  # Commit immediately after adding a new purpose
-    db.refresh(purpose)
-
-    # Check for duplicate (preference_id, purposes_id) before adding to prevent IntegrityError
-    existing_preference_purpose = db.query(PreferencePurpose).filter_by(
-        preference_id=preference.preference_id,
-        purposes_id=purpose.purposes_id
-    ).first()
-
-    if not existing_preference_purpose:
-        # Create the many-to-many relationship record
-        preference_purpose = PreferencePurpose(
+        # Check for duplicate (preference_id, purposes_id) before adding to prevent IntegrityError
+        existing_preference_purpose = db.query(PreferencePurpose).filter_by(
             preference_id=preference.preference_id,
             purposes_id=purpose.purposes_id
-        )
-        db.add(preference_purpose)
+        ).first()
+
+        if not existing_preference_purpose:
+            # Create the many-to-many relationship record
+            preference_purpose = PreferencePurpose(
+                preference_id=preference.preference_id,
+                purposes_id=purpose.purposes_id
+            )
+            db.add(preference_purpose)
+
+        db.commit()  # Commit all purposes and preference purposes at once
     
-    db.commit()  # Commit all purposes and preference purposes at once
-
-    # Step 2: Loop through each day in the itinerary using an index
-    number_of_days = len(loaded_data[0]['days'])
-    print(number_of_days)
-    for i in range(number_of_days):
-        # Access the day info using index 'i'
-        day_info = loaded_data[0]['days'][i]
-        print(i)
-        print(f"day_info: {day_info}")
-        
-        day_number = day_info['day']  # Extract day number
-        print(day_number)
-        current_datetime = datetime.now()  # Use the current date and time
-        
-        # Create an entry for each day
-        recommended_day = RecommendedDay(
-            recommended_trip_id=recommendation_plan.recommendation_trip_id,  # Use the auto-incremented ID
-            day_number=day_number,
-            date=current_datetime  # Use current date and time
-        )
-        db.add(recommended_day)
-        db.flush()  # Flush here to ensure recommended_day.day_id is available
-        
-        # Loop through each schedule item in the day
-        for schedule_order, place in enumerate(day_info['schedule'], start=1):
-            if 'place' in place:
-                # Handle place entries (add default values if missing)
-                latitude = place.get('latitude', 0.0)
-                longitude = place.get('longitude', 0.0)
-                
-                # Create the place entry
-                place_entry = RecommendationPlace(
-                    place_name=place['place'],
-                    address=place['address'],
-                    latitude=latitude,
-                    longitude=longitude
-                )
-                db.add(place_entry)
-                db.flush()  # Flush to get place_id
-                
-                # Create a schedule entry for the place
-                schedule_entry = RecommendationSchedule(
-                    day_id=recommended_day.day_id,
-                    place_id=place_entry.place_id,
-                    schedule_order=schedule_order
-                )
-                db.add(schedule_entry)
-                db.flush()
+        # Step 2: Loop through each day in the itinerary using an index
+        number_of_days = len(loaded_data[0]['days'])
+        for i in range(number_of_days):
+            day_info = loaded_data[0]['days'][i]
+            day_number = day_info['day']  # Extract day number
+            current_datetime = datetime.now()  # Use the current date and time
             
-            elif 'restaurant' in place:
-                # Handle restaurant entries
-                latitude = place.get('latitude', 0.0)
-                longitude = place.get('longitude', 0.0)
-                
-                # Create the place entry for restaurant
-                place_entry = RecommendationPlace(
-                    place_name=place['restaurant'],
-                    address=place['address'],
-                    latitude=latitude,
-                    longitude=longitude
-                )
-                db.add(place_entry)
-                db.flush()  # Flush to get place_id
-                
-                # Create a schedule entry for the restaurant
-                schedule_entry = RecommendationSchedule(
-                    day_id=recommended_day.day_id,
-                    place_id=place_entry.place_id,
-                    schedule_order=schedule_order
-                )
-                db.add(schedule_entry)
-                db.flush()
+            # Create an entry for each day
+            recommended_day = RecommendedDay(
+                recommended_trip_id=recommendation_plan.recommendation_trip_id,  # Link the trip_id
+                day_number=day_number,
+                date=current_datetime  # Use current date and time
+            )
+            db.add(recommended_day)
+            db.flush()  # Ensure recommended_day.day_id is available
+            
+            # Loop through each schedule item in the day
+            for schedule_order, place in enumerate(day_info['schedule'], start=1):
+                if 'place' in place:
+                    # Handle place entries
+                    latitude = place.get('latitude', 0.0)
+                    longitude = place.get('longitude', 0.0)
+                    
+                    # Create the place entry
+                    place_entry = RecommendationPlace(
+                        place_name=place['place'],
+                        address=place['address'],
+                        latitude=latitude,
+                        longitude=longitude
+                    )
+                    db.add(place_entry)
+                    db.flush()  # Flush to get place_id
+                    
+                    # Create a schedule entry for the place
+                    schedule_entry = RecommendationSchedule(
+                        day_id=recommended_day.day_id,
+                        place_id=place_entry.place_id,
+                        schedule_order=schedule_order,
+                        recommendation_trip_id=recommendation_plan.recommendation_trip_id  # Make sure trip_id is included
+                    )
+                    db.add(schedule_entry)
+                elif 'restaurant' in place:
+                    # Handle restaurant entries similarly
+                    latitude = place.get('latitude', 0.0)
+                    longitude = place.get('longitude', 0.0)
+                    
+                    place_entry = RecommendationPlace(
+                        place_name=place['restaurant'],
+                        address=place['address'],
+                        latitude=latitude,
+                        longitude=longitude
+                    )
+                    db.add(place_entry)
+                    db.flush()  # Flush to get place_id
+                    
+                    schedule_entry = RecommendationSchedule(
+                        day_id=recommended_day.day_id,
+                        place_id=place_entry.place_id,
+                        schedule_order=schedule_order,
+                        recommendation_trip_id=recommendation_plan.recommendation_trip_id  # Include trip_id here as well
+                    )
+                    db.add(schedule_entry)
+            db.commit()
         
-        # Commit all days, schedules, and places after processing all entries
-        db.commit()
+        print("finished_db")
+        return recommendation_plan.recommendation_trip_id
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"An error occurred while saving the itinerary: {str(e)}")
 
-    # Step 4: Save the cleaned JSON to a new file named with recommendation_trip_id
-    with open(f'{recommendation_plan.recommendation_trip_id}.json', 'w', encoding='utf-8') as json_file:
-        json.dump(loaded_data, json_file, ensure_ascii=False, indent=4)
-
-    # Return the recommendation_trip_id
-    return recommendation_plan.recommendation_trip_id
 
 
 
