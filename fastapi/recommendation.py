@@ -46,6 +46,27 @@ from database import (
     Base,
     YoutubeVideo
 )
+from mapping import (
+    MVMN_NM_MAP,
+    TRAVEL_PURPOSE_MAP,
+    GENDER_MAP,
+    GENDER_REVERSE_MAP,
+    TRAVEL_STYL_1_MAP,
+    TRAVEL_MOTIVE_1,
+    AGE_GRP_MAP,
+    TRAVEL_STATUS_ACCOMPANY_MAP,
+    TRANSPORTATION_MAP
+)
+from dto import (
+    RequestData,
+    InputData,
+    RecommendationPlanDTO,
+    RecommendationPlaceDTO,
+    RecommendationScheduleDTO,
+    DayScheduleDTO,
+    RecommendationResponseDTO,
+    PreferenceResponseDTO
+)
 
 
 @asynccontextmanager
@@ -67,15 +88,6 @@ async def lifespan(app: FastAPI):
             raise TypeError("Loaded scaler is not a valid StandardScaler instance.")
         if not isinstance(mlb, MultiLabelBinarizer):
             raise TypeError("Loaded mlb is not a valid MultiLabelBinarizer instance.")
-        
-        # OneHotEncoder 카테고리 확인
-        print("Categories in the OneHotEncoder:", encoder.categories_)
-        # StandardScaler 평균 및 스케일 확인
-        print("Mean values in the StandardScaler:", scaler.mean_)
-        print("Scale values in the StandardScaler:", scaler.scale_)
-
-        # MultiLabelBinarizer 클래스 확인
-        print("Classes in the MultiLabelBinarizer:", mlb.classes_)
 
     except Exception as e:
         logger.error(f"Failed to initialize encoders on startup: {str(e)}")
@@ -88,14 +100,14 @@ app = FastAPI(lifespan=lifespan)
 # S3 자격증명
 session = boto3.Session(
     aws_access_key_id='access_key',
-    aws_secret_access_key='secret_access_key',
-    region_name='region_name'
+    aws_secret_access_key='access_key',
+    region_name='name'
 )
 
 # S3 및 MySQL 연결 설정
 s3 = session.client('s3')
-bucket_name = 'bucket_name'
-directory_name = 'directory_name'
+bucket_name = 'name'
+directory_name = 'name'
 
 # Elasticsearch 연결
 es_host = "host"
@@ -127,171 +139,6 @@ def get_user_profile_from_header(request: Request) -> UserProfile:
     
     return UserProfile(user_id=user_id, username=username)
 
-# Pydantic model for input validation
-class RequestData(BaseModel):
-    TRAVEL_PURPOSE: List[str] # purposes
-    MVMN_NM: str # preference
-    AGE_GRP: str # preference
-    GENDER: str
-    TRAVEL_STYL_1: str # preferences
-    TRAVEL_MOTIVE_1: str # preferences
-    TRAVEL_STATUS_ACCOMPANY: str # preference
-    TRAVEL_STATUS_DAYS: int
-    ROAD_ADDR: str
-    recommendation_type: str
-    start_date: str # preference
-    end_date: str # preference
-
-# Pydantic model for input validation
-class InputData(BaseModel):
-    TRAVEL_PURPOSE: str # purposes
-    MVMN_NM: str # preference
-    AGE_GRP: str # preference
-    GENDER: str
-    TRAVEL_STYL_1: int # preferences
-    TRAVEL_MOTIVE_1: int # preferences
-    TRAVEL_STATUS_ACCOMPANY: str # preference
-    TRAVEL_STATUS_DAYS: int
-    ROAD_ADDR: str
-
-# Define the mapping for means of transportation conversion (MVMN_NM)
-MVMN_NM_MAP: Dict[str, str] = {
-    'CAR': '자가용',
-    'PUBLIC_TRANSPORTATION': '대중교통 등'
-}
-# Define the mapping for TRAVEL_PURPOSE conversion
-TRAVEL_PURPOSE_MAP: Dict[str, str] = {
-    'SHOPPING': "1;",
-    'THEME_PARK': "2;",
-    'HISTORIC_SITE': "3;",
-    'CITY_TOUR': "4;",
-    'OUTDOOR_SPORTS': "5;",
-    'CULTURAL_EVENT': "6;",
-    'NIGHTLIFE': "7;",
-    'CAMPING': "8;",
-    'LOCAL_FESTIVAL': "9;",
-    'SPA': "10;",
-    'EDUCATION': "11;",
-    'FILM_LOCATION': "12;",
-    'PILGRIMAGE': "13;",
-    'WELLNESS': "21;",
-    'SNS_SHOT': "22;",
-    'HOTEL_STAYCATION': "23;",
-    'NEW_TRAVEL_DESTINATION': "24;",
-    'PET_FRIENDLY': "25;",
-    'INFLUENCER_FOLLOW': "26;",
-    'ECO_TRAVEL': "27;",
-    'HIKING': "28;"
-}
-
-GENDER_MAP: Dict[str, str] = {
-    '남': 'MALE',
-    '여': 'FEMALE'
-}
-
-GENDER_REVERSE_MAP: Dict[str, str] = {
-    'MALE': '남',
-    'FEMALE': '여'
-}
-
-# Define the mapping for style conversion
-TRAVEL_STYL_1_MAP: Dict[str, int] = {
-    'VERY_NATURE': 1,
-    'MODERATE_NATURE': 2,
-    'NEUTRAL': 3,
-    'MODERATE_CITY': 4,
-    'VERY_CITY': 5
-}
-
-# Define the mapping for motive conversion
-TRAVEL_MOTIVE_1: Dict[str, int] = {
-    'ESCAPE': 1,
-    'REST': 2,
-    'COMPANION_BONDING': 3,
-    'SELF_REFLECTION': 4,
-    'SOCIAL_MEDIA': 5,
-    'EXERCISE': 6,
-    'NEW_EXPERIENCE': 7,
-    'CULTURAL_EDUCATION': 8,
-    'SPECIAL_PURPOSE': 9
-}
-
-# Define the mappings
-AGE_GRP_MAP: Dict[str, str] = {
-    'UNDER_9': "10",
-    'TEENS': "10",
-    '20S': "20",
-    '30S': "30",
-    '40S': "40",
-    '50S': "50",
-    '60S': "60",
-    '70_AND_OVER': "70"
-}
-
-# Define the mapping for travel status accompany (TRAVEL_STATUS_ACCOMPANY)
-TRAVEL_STATUS_ACCOMPANY_MAP: Dict[str, str] = {
-    'GROUP_OVER_3': '3인 이상 여행(가족 외)',
-    'WITH_CHILD': '자녀 동반 여행',
-    'DUO': '2인 여행(가족 외)',
-    'SOLO': '나홀로 여행',
-    'FAMILY_DUO': '2인 가족 여행',
-    'EXTENDED_FAMILY': '3대 동반 여행(친척 포함)'
-}
-
-TRANSPORTATION_MAP: Dict[str, str] = {
-    'CAR': '자가용',
-    'PUBLIC_TRANSPORTATION': '대중교통 등'
-}
-
-class PurposeDTO(BaseModel):
-    name: str
-
-class PreferenceDTO(BaseModel):
-    preference_id: str
-        
-# DTO for returning recommendation plans
-class RecommendationPlanDTO(BaseModel):
-    recommendation_trip_id: int
-    title: str
-    description: str
-
-# DTO for the response
-class RecommendationPlaceDTO(BaseModel):
-    place: str
-    longitude: Optional[str] = None
-    latitude: Optional[str] = None
-    address: Optional[str] = None
-
-class RecommendationScheduleDTO(BaseModel):
-    order: str
-    place: RecommendationPlaceDTO
-
-class DayScheduleDTO(BaseModel):
-    dayNumber: str
-    date: str
-    schedule: List[RecommendationScheduleDTO]
-
-class RecommendationResponseDTO(BaseModel):
-    title: str
-    description: str
-    recommendation_type: str
-    start_date: str
-    end_date: str
-    days: List[DayScheduleDTO]
-    preference_id: Optional[str] = None
-
-class PreferenceResponseDTO(BaseModel):
-    recommendation_trip_id: int
-    user_id: int
-    travel_status_days: int
-    style: int
-    motive: int
-    means_of_transportation: str
-    travel_companion_status: str
-    age_group: str
-    purposes: str
-    gender: str
-
 # Add CORS middleware here
 app.add_middleware(
     CORSMiddleware,
@@ -308,13 +155,6 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-# Load and preprocess the data
-def load_and_preprocess_data(file_path):
-    data = pd.read_csv(file_path, dtype={'TRAVEL_ID': str}, low_memory=False)
-    data['MVMN_NM'] = data['MVMN_NM'].ffill()
-    return data
 
 # Data encoding and vectorization using preloaded encoders
 def encode_and_vectorize_data(data):
@@ -469,7 +309,7 @@ def create_travel_itinerary(matching_destinations_and_road_addrs, days):
     
     # Updated prompt with strict formatting instructions for generating a travel itinerary in JSON format
     prompt_content = f"""
-    You are a travel itinerary planner. Based on the user's preferences, create a detailed travel itinerary for {days} days using the provided travel location information. 
+    You are a travel itinerary planner. Based on the user's preferences, create a detailed travel itinerary for {days} days using the provided travel location information.
 
     **Important Formatting Instructions**:
     1. Ensure that the output strictly matches the specified JSON structure without any deviation.
@@ -477,7 +317,6 @@ def create_travel_itinerary(matching_destinations_and_road_addrs, days):
     3. Avoid using English or placeholders like '<>' in the output; ensure all fields contain the correct information based on available data.
 
     The output must follow this exact JSON format:
-
     {{
         "title": "<A brief, relevant title for the entire itinerary in Korean>",
         "description": "<A descriptive summary of the entire itinerary in Korean>",
@@ -504,16 +343,17 @@ def create_travel_itinerary(matching_destinations_and_road_addrs, days):
     }}
 
     **Content Requirements**:
-    1. Each day must include exactly **4 unique tourist places** and **1 unique restaurant**, with no repetition across days.
+    1. Each day must include exactly **4 unique tourist places** and **1 unique restaurant**, with no repetition across days. If a tourist place has already been included on a previous day, exclude it and replace it with a different one to ensure variety.
     2. Each place and restaurant must contain the correct address, longitude, and latitude found from available data or external knowledge.
-    3. If there are not enough provided locations or restaurants in the user preferences, generate appropriate places or restaurants based on the destination.
-    4. Exclude non-tourist places such as rest areas, gas stations, marts, or convenience stores.
+    3. If there are not enough provided locations or restaurants in the user preferences, generate appropriate places or restaurants based on the destination. Ensure that these places or restaurants actually exist at the destination.
+    4. Exclude non-tourist places such as rest areas, gas stations, marts, convenience stores, and subway stations, or any other locations that are not strictly considered tourist attractions.
 
     **Extracted travel location information based on user preferences**:
     {matching_destinations_and_road_addrs}
 
     Please generate an itinerary for each of the {days} days, ensuring all formatting and content guidelines are followed exactly.
     """
+
 
     
     # GPT 요청 코드 (새로운 인터페이스 사용)
@@ -523,7 +363,8 @@ def create_travel_itinerary(matching_destinations_and_road_addrs, days):
             {"role": "system", "content": "You are the person who makes travel plans."},
             {"role": "user", "content": prompt_content}
         ],
-        max_tokens=3000
+        max_tokens=3000,
+        temperature=0.7
     )
 
     
@@ -537,8 +378,6 @@ def save_itinerary(response):
     cleaned_content = re.sub(r'^.*?{', '{', response_content, flags=re.DOTALL)
     cleaned_content = re.sub(r'}\s*[^}]*$', '}', cleaned_content)
     cleaned_content = cleaned_content.strip()  # Trim any leading/trailing spaces
-    # Print cleaned content to check its validity before parsing
-    # print("Cleaned Content: ", cleaned_content)
 
     wrapped_data = {"travel": cleaned_content}
     # print(f"wrapped_data: {wrapped_data}")
@@ -546,7 +385,6 @@ def save_itinerary(response):
         json.dump(wrapped_data, json_file, ensure_ascii=False, indent=4)
 
     # Load the JSON file
-    # Load the JSON file (assuming it is a string inside the 'travel' key)
     with open('./recommendation_cl.json', 'r', encoding='utf-8') as json_file:
         loaded_data = json.load(json_file)
 
@@ -575,13 +413,6 @@ def save_itinerary(response):
     try:
         # Convert cleaned string to a valid JSON object
         travel_data = json.loads(cleaned_travel_string)
-        
-        # # Print out all the days and their schedules
-        # for day in travel_data:
-        #     print(f"Day: {day.get('day')}")
-        #     for schedule in day.get('schedule', []):
-        #         for key, value in schedule.items():
-        #             print(f"{key}: {value}")
                     
         # Optionally, you can also save the cleaned JSON back to a file
         with open('cleaned_recommendation_cl.json', 'w', encoding='utf-8') as json_file:
@@ -607,11 +438,17 @@ async def get_all_recommendation(user_id: str = Header(..., alias="X-User-Id"),
     ]
 
 @app.get("/recommendations/{recommendation_trip_id}", response_model=RecommendationResponseDTO)
-async def get_recommendation(recommendation_trip_id: str, db: Session = Depends(get_db)):
+async def get_recommendation(recommendation_trip_id: str,
+                             user_id: str = Header(..., alias="X-User-Id"),
+                             db: Session = Depends(get_db)):
     # Query the RecommendationPlan by recommendation_trip_id
     recommendation_plan = db.query(RecommendationPlan).filter_by(recommendation_trip_id=recommendation_trip_id).first()
     if not recommendation_plan:
-        raise HTTPException(status_code=404, detail="Recommendation plan not found")
+        raise HTTPException(status_code=404, detail="존재하지 않는 여행입니다.")
+    
+    # Check if the user_id matches
+    if str(recommendation_plan.user_id) != user_id:
+        raise HTTPException(status_code=403, detail="해당 여행에 대한 권한이 없습니다.")
     
     # Fetch associated days and schedules
     recommendation_days = db.query(RecommendationDay).filter_by(recommendation_trip_id=recommendation_trip_id).all()
@@ -662,118 +499,28 @@ async def get_recommendation(recommendation_trip_id: str, db: Session = Depends(
 
 
 @app.delete("/recommendations/{recommendation_trip_id}")
-async def delete_recommendation(recommendation_trip_id: int, db: Session = Depends(get_db)):
+async def delete_recommendation(recommendation_trip_id: int,
+                                user_id: str = Header(..., alias="X-User-Id"),
+                                db: Session = Depends(get_db)):
     try:
         # Step 1: Find the RecommendationPlan by ID
-        recommendation_plan = db.query(RecommendationPlan).filter_by(recommendation_trip_id=recommendation_trip_id).first()
-        
+        recommendation_plan = db.query(RecommendationPlan).get(recommendation_trip_id)
         if not recommendation_plan:
-            raise HTTPException(status_code=404, detail="Recommendation plan not found")
-
-        # Step 2: Delete all related RecommendationSchedules
-        recommended_days = db.query(RecommendationDay).filter_by(recommended_trip_id=recommendation_trip_id).all()
+            raise HTTPException(status_code=404, detail="존재하지 않는 여행입니다.")
         
-        for day in recommended_days:
-            # Get schedules for the day
-            schedules = db.query(RecommendationSchedule).filter_by(day_id=day.day_id).all()
-            for schedule in schedules:
-                # Delete the schedule
-                db.delete(schedule)
-            
-            # Step 3: Delete places associated with the schedules
-            places = db.query(RecommendationPlace).filter(RecommendationPlace.place_id.in_(
-                [schedule.place_id for schedule in schedules])).all()
-            for place in places:
-                db.delete(place)
-            
-            # Delete the day after its schedules and places have been deleted
-            db.delete(day)
-        
-        # Step 4: Delete Preferences and PreferencePurpose related to the recommendation
-        preferences = db.query(Preference).filter_by(recommendation_id=recommendation_plan.recommendation_trip_id).all()
-        for preference in preferences:
-            # Delete all PreferencePurpose records
-            preference_purposes = db.query(PreferencePurpose).filter_by(preference_id=preference.preference_id).all()
-            for preference_purpose in preference_purposes:
-                db.delete(preference_purpose)
-            
-            # Delete the preference after its related entries are deleted
-            db.delete(preference)
-
-        # Step 5: Finally, delete the RecommendationPlan itself
+        if str(recommendation_plan.user_id) != user_id:
+            raise HTTPException(status_code=403, detail="해당 여행에 대한 권한이 없습니다.")
+    
+        # Step 2: Delete the RecommendationPlan (cascade will handle related entities)
         db.delete(recommendation_plan)
-
-        # Commit all changes
         db.commit()
 
-        return {"message": f"Recommendation with ID {recommendation_trip_id} and related data has been deleted successfully."}
-
+        return {"data": recommendation_trip_id}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"An error occurred while deleting the recommendation: {str(e)}")
+
     
-
-# 쿠키 파일 경로 설정
-COOKIES_FILE_PATH = "./cookies.txt"
-
-# yt-dlp 다운로드 함수
-def download_video_with_cookies(url: str):
-    command = [
-        "yt-dlp",
-        "--cookies", COOKIES_FILE_PATH,  # 쿠키 파일 사용
-        url
-    ]
-    try:
-        subprocess.run(command, check=True)
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail="비디오 다운로드 실패")
-
-@app.post("/process-url")
-async def process_url(url: str, user_id: int):
-    db = SessionLocal()
-    try:
-        existing_video = db.query(YoutubeVideo).filter_by(url=url).first()
-        if existing_video:
-            return JSONResponse(content={"travel_id": existing_video.recommendation_trip_id, "route": existing_video})
-
-        # yt-dlp 다운로드 함수 호출
-        download_video_with_cookies(url)
-
-        # YouTube 비디오 정보와 OCR 텍스트 추출
-        youtube_info_data = youtube_info.extract_video_info(url)  # youtube_info에서 정보 추출
-        easyocr_text = easyocr_url.easy_ocr_function(url)  # easyocr_url에서 OCR 텍스트 추출
-        whisper_text = whisper_url.get_youtube_transcript(url)  # whisper_url에서 유튜브 텍스트 추출
-
-        # Whisper 텍스트가 리스트인 경우 결합
-        if isinstance(whisper_text, list):
-            whisper_text = "\n".join(whisper_text)
-
-        # 여행 추천 경로 생성
-        travel_route_json = youtube_recommendation.generate_travel_route(
-            easyocr_text,
-            whisper_text,
-            url,
-            user_id,
-            db,
-            "api_key"
-        )
-
-        return JSONResponse(content={"message": "Travel route and associated data saved successfully."})
-        
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e.orig)}")
-    except ValueError as ve:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Value error: {str(ve)}")
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unknown error: {str(e)}")
-    
-    finally:
-        db.close()
-
-
 @app.post("/recommendations")
 async def recommend(
     request_data: RequestData,
@@ -832,12 +579,12 @@ async def get_preference(preference_id: str, db: Session = Depends(get_db)):
         # Fetch the Preference entry by ID
         preference = db.query(Preference).filter_by(preference_id=preference_id).first()
         if not preference:
-            raise HTTPException(status_code=404, detail="Preference not found")
+            raise HTTPException(status_code=404, detail="존재하지 않는 성향정보입니다.")
 
         # Fetch the associated Recommendation entry to get the user_id
         recommendation = db.query(RecommendationPlan).filter_by(recommendation_trip_id=preference.recommendation_id).first()
         if not recommendation:
-            raise HTTPException(status_code=404, detail="Recommendation not found")
+            raise HTTPException(status_code=404, detail="존재하지 않는 여행입니다.")
 
         # Fetch the associated purposes for this preference
         preference_purposes = db.query(PreferencePurpose).filter_by(preference_id=preference_id).all()
@@ -866,6 +613,69 @@ async def get_preference(preference_id: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error fetching preference: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {e}")
+
+
+# 쿠키 파일 경로 설정
+COOKIES_FILE_PATH = "./cookies.txt"
+
+# yt-dlp 다운로드 함수
+def download_video_with_cookies(url: str):
+    command = [
+        "yt-dlp",
+        "--cookies", COOKIES_FILE_PATH,  # 쿠키 파일 사용
+        url
+    ]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail="비디오 다운로드 실패")
+
+
+@app.post("/process-url")
+async def process_url(url: str, user_id: int):
+    db = SessionLocal()
+    try:
+        existing_video = db.query(YoutubeVideo).filter_by(url=url).first()
+        if existing_video:
+            return JSONResponse(content={"travel_id": existing_video.recommendation_trip_id, "route": existing_video})
+
+        # yt-dlp 다운로드 함수 호출
+        download_video_with_cookies(url)
+
+        # YouTube 비디오 정보와 OCR 텍스트 추출
+        youtube_info_data = youtube_info.extract_video_info(url)  # youtube_info에서 정보 추출
+        easyocr_text = easyocr_url.easy_ocr_function(url)  # easyocr_url에서 OCR 텍스트 추출
+        whisper_text = whisper_url.get_youtube_transcript(url)  # whisper_url에서 유튜브 텍스트 추출
+
+        # Whisper 텍스트가 리스트인 경우 결합
+        if isinstance(whisper_text, list):
+            whisper_text = "\n".join(whisper_text)
+
+        # 여행 추천 경로 생성
+        travel_route_json = youtube_recommendation.generate_travel_route(
+            easyocr_text,
+            whisper_text,
+            url,
+            user_id,
+            db,
+            "access_key"
+        )
+
+        return JSONResponse(content={"message": "Travel route and associated data saved successfully."})
+        
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database integrity error: {str(e.orig)}")
+    except ValueError as ve:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Value error: {str(ve)}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unknown error: {str(e)}")
+    
+    finally:
+        db.close()
+
 
 
 def save_itinerary_to_db(loaded_data, user_id, db: Session, request_data: RequestData):
