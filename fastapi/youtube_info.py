@@ -7,11 +7,19 @@ import requests
 logging.basicConfig(level=logging.INFO)
 
 OUTPUT_JSON = 'youtube_data.json'
+COOKIES_FILE = 'cookies.txt'  # 쿠키 파일 경로
+
+def validate_youtube_url(youtube_url):
+    """YouTube URL인지 확인"""
+    if "youtube.com" not in youtube_url and "youtu.be" not in youtube_url:
+        raise ValueError("유효하지 않은 YouTube 링크입니다. YouTube URL을 입력해주세요.")
 
 def extract_video_info(youtube_url):
+    validate_youtube_url(youtube_url)  # URL 검증 추가
     ydl_opts = {
         'format': 'best',
-        "cookies": "./cookies.txt",  # Use cookies for authentication
+        'quiet': True,
+        'cookiefile': COOKIES_FILE,  # 쿠키 파일 경로 추가
     }
 
     current_time = datetime.now().isoformat()  # datetime을 ISO 형식의 문자열로 변환
@@ -19,7 +27,7 @@ def extract_video_info(youtube_url):
     with YoutubeDL(ydl_opts) as ydl:
         info_dict = ydl.extract_info(youtube_url, download=False)
         
-        video_info = {
+        youtube_videos = {
             "video_id": info_dict.get("id"),
             "youtuber_id": info_dict.get("channel_id"),
             "title": info_dict.get("title"),
@@ -32,7 +40,7 @@ def extract_video_info(youtube_url):
         }
         
         # 유튜버 정보 추가
-        youtuber_info = {
+        youtubers = {
             "youtuber_id": info_dict.get("channel_id"),
             "name": info_dict.get("channel_name"),
             "url": info_dict.get("channel_url"),
@@ -40,7 +48,7 @@ def extract_video_info(youtube_url):
             "updated_at": current_time         
         }
         
-        return {"video_info": video_info, "youtuber_info": youtuber_info}
+        return {"video_info": youtube_videos, "youtuber_info": youtubers}
 
 def get_high_resolution_thumbnail(video_id):
     thumbnail_urls = [
@@ -77,6 +85,7 @@ def save_to_json(youtube_url, output_file, travel_id):
 
 # 아래의 코드는 이 모듈이 직접 실행될 때만 동작합니다.
 if __name__ == "__main__":
-    youtube_url = "https://www.youtube.com/watch?v=eMpsJz5n-Mg"  # 테스트할 유튜브 URL
+    youtube_url = "https://www.youtube.com/watch?v=b8iUIJczDtQ"  # 테스트할 유튜브 URL
     travel_id = 1  # 테스트용 travel_id
     save_to_json(youtube_url, OUTPUT_JSON, travel_id)
+

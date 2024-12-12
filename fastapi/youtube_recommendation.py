@@ -5,7 +5,7 @@ import json
 from fastapi import HTTPException
 import requests
 from bs4 import BeautifulSoup
-from database import RecommendationPlan, RecommendedDay, RecommendationPlace, RecommendationSchedule, TravelPlanYoutubeVideo, YoutubeVideo
+from database import RecommendationPlan, RecommendationPlace, RecommendationSchedule, TravelPlanYoutubeVideo, YoutubeVideo, RecommendationDay
 from sqlalchemy.orm import Session
 
 # Whisper 텍스트 읽기 함수
@@ -54,7 +54,7 @@ def get_youtube_title(video_url):
 def call_chatgpt_api(prompt, api_key):
     try:
         headers = {
-            'Authorization': f"Bearer key",
+            'Authorization': f"api_key",
             'Content-Type': 'application/json',
         }
         data = {
@@ -150,8 +150,8 @@ def save_route_to_db(travel_route_json, db, user_id):
 
     # 2. RecommendedDay 및 RecommendationSchedule 저장
     for day in travel_route_json["days"]:
-        recommended_day = RecommendedDay(
-            recommended_trip_id=recommendation_plan.recommendation_trip_id,
+        recommended_day = RecommendationDay(
+            recommendation_trip_id=recommendation_plan.recommendation_trip_id,
             day_number=day["day"],
             date=datetime.now()  # 적절한 날짜를 설정
         )
@@ -172,7 +172,6 @@ def save_route_to_db(travel_route_json, db, user_id):
             recommendation_schedule = RecommendationSchedule(
                 day_id=recommended_day.day_id,
                 place_id=recommendation_place.place_id,
-                recommendation_trip_id=recommendation_plan.recommendation_trip_id,
                 schedule_order=idx + 1  # 1부터 시작
             )
             db.add(recommendation_schedule)
