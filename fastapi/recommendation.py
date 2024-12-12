@@ -2,7 +2,9 @@ from datetime import datetime
 import json
 import logging
 import time
+from typing import AsyncGenerator
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -10,6 +12,8 @@ from sqlalchemy.exc import IntegrityError
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import RedirectResponse
+from fastapi.responses import StreamingResponse
+import asyncio
 import easyocr_url
 import whisper_url
 import youtube_info
@@ -34,6 +38,8 @@ from sklearn.neighbors import NearestNeighbors
 from contextlib import asynccontextmanager
 from typing import Dict, List
 from typing import Optional
+from sqlalchemy.sql import func
+from dotenv import load_dotenv
 from database import (
     RecommendationPlan,
     RecommendationDay,
@@ -44,7 +50,8 @@ from database import (
     PreferencePurpose,
     SessionLocal,
     Base,
-    YoutubeVideo
+    YoutubeVideo,
+    UserRequestLimit
 )
 from mapping import (
     MVMN_NM_MAP,
@@ -67,7 +74,6 @@ from dto import (
     RecommendationResponseDTO,
     PreferenceResponseDTO
 )
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):    
@@ -94,26 +100,29 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"Startup initialization failed: {str(e)}")
     
     yield  # Application runs while yielding
-    
+
+load_dotenv()
 app = FastAPI(lifespan=lifespan)
+
+notifications: Dict[str, List[Dict]] = {}
 
 # S3 자격증명
 session = boto3.Session(
-    aws_access_key_id='access_key',
-    aws_secret_access_key='access_key',
-    region_name='name'
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name='us-east-1'
 )
 
 # S3 및 MySQL 연결 설정
 s3 = session.client('s3')
-bucket_name = 'name'
-directory_name = 'name'
+bucket_name = 'alphaka-storage'
+directory_name = 'travel/'
 
 # Elasticsearch 연결
-es_host = "host"
-es_user = "user"
-es_password = "password"
-es_index = 'index'
+es_host = "http://158.180.71.130:9200"
+es_user = os.getenv("ES_USER")
+es_password = os.getenv("ES_PASSWORD")
+es_index = 'travel_info'
 es = Elasticsearch(
     hosts=[es_host],
     basic_auth=(es_user, es_password)
@@ -305,7 +314,8 @@ def get_travel_recommendations(new_input_data):
 
 # Generate travel itinerary using OpenAI API
 def create_travel_itinerary(matching_destinations_and_road_addrs, days):
-    openai.api_key = 'api_key'  # Replace with your OpenAI API key
+    # OpenAI API key
+    openai.api_key = os.getenv("OPENAI_API_KEY")
     
     # Updated prompt with strict formatting instructions for generating a travel itinerary in JSON format
     prompt_content = f"""
@@ -433,7 +443,13 @@ async def get_all_recommendation(user_id: str = Header(..., alias="X-User-Id"),
     
     # Prepare and return the list of recommendations
     return [
-        RecommendationPlanDTO(recommendation_trip_id=plan.recommendation_trip_id, title=plan.name, description=plan.description)
+        RecommendationPlanDTO
+        (recommendation_trip_id=plan.recommendation_trip_id,
+         title=plan.name,
+         description=plan.description,
+         recommendation_type=plan.recommendation_type,
+         start_date=plan.start_date.isoformat() if plan.start_date else None,
+         end_date=plan.end_date.isoformat() if plan.end_date else None)
         for plan in recommendation_plans
     ]
 
@@ -532,6 +548,20 @@ async def recommend(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     try:
+
+        # Check user request limit
+        user_limit = db.query(UserRequestLimit).filter_by(user_id=user_id, date=func.current_date()).first()
+        if user_limit and user_limit.request_count > 5:
+            raise HTTPException(detail="하루 사용량을 초과하였습니다.")
+
+        if user_limit:
+            user_limit.request_count += 1
+        else:
+            user_limit = UserRequestLimit(user_id=user_id, request_count=1)
+            db.add(user_limit)
+
+        db.commit()
+
         # Log the received user ID
         print(f"User ID from header: {user_id}")
         
@@ -541,7 +571,7 @@ async def recommend(
         print(new_input_data)
         
         # Schedule the task to run in the background
-        background_tasks.add_task(process_recommendation_task, new_input_data, user_id, db, request_data)
+        background_tasks.add_task(process_recommendation_task, new_input_data, user_id, user_nickname, db, request_data)
         
         # Respond immediately with a 200 OK status
         return {"message": "요청이 성공적으로 처리되었습니다."}
@@ -549,7 +579,7 @@ async def recommend(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"An error occurred: {str(e)}")
 
-def process_recommendation_task(new_input_data, user_id, db, request_data):
+async def process_recommendation_task(new_input_data, user_id, user_nickname, db, request_data):
     try:
         # Generate travel recommendations
         matching_destinations_and_road_addrs= get_travel_recommendations(new_input_data)
@@ -558,7 +588,6 @@ def process_recommendation_task(new_input_data, user_id, db, request_data):
         if not matching_destinations_and_road_addrs:
             print("No matching destinations found.")
             return
-        
         print(matching_destinations_and_road_addrs)
         # Generate travel itinerary using OpenAI
         response = create_travel_itinerary(matching_destinations_and_road_addrs, request_data.TRAVEL_STATUS_DAYS)
@@ -566,12 +595,41 @@ def process_recommendation_task(new_input_data, user_id, db, request_data):
         
         # Save the recommendations to the database using user_id
         created_recommendation_id = save_itinerary_to_db(travel_data, user_id, db, request_data)
+        print("Itinerary generation and saving completed.")
         
+        # Send a real-time WebSocket notification
+        notification_message = {
+            "user_id": user_id,
+            "user_nickname": user_nickname,
+            "recommendation_id": 1,
+            "status": "completed",
+            "message": "여행 추천이 완료되었습니다.",
+        }
+        send_notification(user_id, notification_message)
+
         print("Itinerary generation and saving completed.")
         return created_recommendation_id
     
     except Exception as e:
         print(f"An error occurred in the background task: {str(e)}")
+
+# Function to queue notifications
+def send_notification(user_id: str, message: dict):
+    if user_id not in notifications:
+        notifications[user_id] = []
+    notifications[user_id].append(message)
+
+# SSE Endpoint for notifications
+@app.get("/recommendations/notifications/{user_id}")
+async def get_notifications(user_id: str) -> StreamingResponse:
+    async def event_stream() -> AsyncGenerator[str, None]:
+        while True:
+            if isinstance(notifications, dict) and user_id in notifications:
+                yield f"data: {json.dumps(notifications[user_id])}\n\n"
+                del notifications[user_id]  # Clear the notification after sending
+            await asyncio.sleep(1)
+    
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 @app.get("/preferences/{preference_id}", response_model=PreferenceResponseDTO)
 async def get_preference(preference_id: str, db: Session = Depends(get_db)):
@@ -635,6 +693,20 @@ def download_video_with_cookies(url: str):
 async def process_url(url: str, user_id: int):
     db = SessionLocal()
     try:
+
+        # Check user request limit
+        user_limit = db.query(UserRequestLimit).filter_by(user_id=user_id, date=func.current_date()).first()
+        if user_limit and user_limit.request_count > 5:
+            raise HTTPException(detail="하루 사용량을 초과하였습니다.")
+
+        if user_limit:
+            user_limit.request_count += 1
+        else:
+            user_limit = UserRequestLimit(user_id=user_id, request_count=1)
+            db.add(user_limit)
+
+        db.commit()
+
         existing_video = db.query(YoutubeVideo).filter_by(url=url).first()
         if existing_video:
             return JSONResponse(content={"travel_id": existing_video.recommendation_trip_id, "route": existing_video})
@@ -945,7 +1017,6 @@ def load_encoders():
     except Exception as e:
         logger.error(f"Failed to load encoders: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error loading encoders: {str(e)}")
-
 
 if __name__ == "__main__":
     import uvicorn

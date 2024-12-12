@@ -2,9 +2,13 @@ from sqlalchemy import Column, String, BigInteger, Enum, DateTime, Integer, Date
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from datetime import datetime
+from sqlalchemy.sql import func
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 Base = declarative_base()
 
 # Table: recommendation_plans
@@ -180,8 +184,25 @@ class TravelPlanYoutubeVideo(Base):
     travel_plan = relationship("RecommendationPlan", back_populates="youtube_videos")
     youtube_video = relationship("YoutubeVideo", back_populates="travel_plans")
 
+# Table: user_request_limits
+class UserRequestLimit(Base):
+    __tablename__ = "user_request_limits"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    date = Column(Date, default=func.current_date(), nullable=False)  # Tracks the date
+    request_count = Column(Integer, default=0, nullable=False)  # Tracks the number of requests made
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)  # Tracks the last update
+
 # Database setup
-DATABASE_URL = "url"
+DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base.metadata.create_all(bind=engine)
+
+# get_db 함수 정의
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
